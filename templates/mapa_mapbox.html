@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Mapbox GL JS - Monitoreo Profesional</title>
+
+  <!-- 1. CSS Oficial de Mapbox GL JS -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css" rel="stylesheet" />
+
+  <style>
+    body { margin: 0; padding: 0; }
+    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+  </style>
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <!-- 2. JavaScript Oficial de Mapbox GL JS -->
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js"></script>
+
+  <script>
+    // Pegá tu token pública de Mapbox acá
+    mapboxgl.accessToken = 'TU_PUBLIC_TOKEN_AQUI';
+
+    const map = new mapboxgl.Map({
+      container: 'map',
+      style: 'mapbox://styles/mapbox/navigation-day-v1',
+      center: [-58.3816, -34.6037], // Buenos Aires
+      zoom: 16.5, // Zoom inicial un poco más cercano
+      pitch: 45,
+      bearing: 0
+    });
+
+    map.addControl(new mapboxgl.NavigationControl());
+
+    map.on('load', () => {
+      // Cargar ícono de semáforo
+      map.loadImage('https://cdn-icons-png.flaticon.com/512/3501/3501004.png', (error, image) => {
+        if (error) throw error;
+        map.addImage('icono-semaforo', image);
+
+        // Fuente GeoJSON vacía
+        map.addSource('semaforos-osm', {
+          'type': 'geojson',
+          'data': {
+            'type': 'FeatureCollection',
+            'features': []
+          }
+        });
+
+        // Capa optimizada para semáforos
+        map.addLayer({
+          'id': 'capa-semaforos',
+          'type': 'symbol',
+          'source': 'semaforos-osm',
+          'minzoom': 16, // SOLO VISIBLE EN ZOOM CERCANO
+          'layout': {
+            'icon-image': 'icono-semaforo',
+            'icon-size': 0.025, // TAMAÑO MÁS PEQUEÑO Y PROLIJO
+            'icon-allow-overlap': false, // NO SUPERPONER (Oculta íconos apilados)
+            'icon-ignore-placement': false
+          }
+        });
+
+        cargarSemaforosVisibles();
+      });
+    });
+
+    async function cargarSemaforosVisibles() {
+      // Solo consultar si estamos en un zoom cercano (>= 16)
+      if (map.getZoom() < 16) {
+        if (map.getSource('semaforos-osm')) {
+          map.getSource('semaforos-osm').setData({ 'type': 'FeatureCollection', 'features': [] });
+        }
+        return;
+      }
+
+      const bounds = map.getBounds();
+      const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+      const query = `[out:json][timeout:10];node["highway"="traffic_signals"](${bbox});out body;`;
+      const url = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+
+        const features = data.elements.map(nodo => ({
+          'type': 'Feature',
+          'geometry': {
+            'type': 'Point',
+            'coordinates': [nodo.lon, nodo.lat]
+          },
+          'properties': { 'id': nodo.id }
+        }));
+
+        if (map.getSource('semaforos-osm')) {
+          map.getSource('semaforos-osm').setData({
+            'type': 'FeatureCollection',
+            'features': features
+          });
+        }
+      } catch (e) {
+        console.error("Error cargando semáforos:", e);
+      }
+    }
+
+    // Consultar semáforos únicamente al terminar de mover o hacer zoom
+    map.on('moveend', () => {
+      cargarSemaforosVisibles();
+    });
+  </script>
+</body>
+</html>

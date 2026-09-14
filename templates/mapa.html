@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NOXUR Mobile - Telemetría en Tiempo Real</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Mapbox GL JS CSS y JS -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet" />
+
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    
+    <style>
+        * { box-sizing: border-box; }
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; font-family: 'Inter', sans-serif; background-color: #f1f5f9; }
+        #map { height: 100vh; width: 100vw; }
+        
+        #panel-navegacion {
+            position: absolute; top: 20px; left: 20px; z-index: 10;
+            background: rgba(255, 255, 255, 0.94);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(15, 23, 42, 0.1);
+            padding: 18px; border-radius: 16px; 
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.15);
+            width: 330px; color: #0f172a;
+        }
+
+        .header-brand { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 10px; margin-bottom: 12px; }
+        .header-brand h3 { margin: 0; font-size: 16px; font-weight: 700; color: #0f172a; }
+        .badge-live { background: rgba(16, 185, 129, 0.15); color: #059669; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 20px; }
+        
+        /* 🔍 Buscador de Direcciones */
+        .search-container { display: flex; gap: 6px; margin-bottom: 14px; }
+        .search-input {
+            flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1;
+            font-size: 13px; outline: none; background: #f8fafc;
+        }
+        .search-input:focus { border-color: #0284c7; background: #ffffff; }
+        .search-btn {
+            background: #0284c7; color: white; border: none; border-radius: 8px;
+            padding: 8px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+        }
+        .search-btn:hover { background: #0369a1; }
+
+        .label { font-weight: 600; color: #0284c7; font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px; }
+        .coordenadas { font-family: monospace; background: #f1f5f9; color: #0f172a; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.08); font-size: 12px; display: block; font-weight: 600; }
+
+        /* 📸 Marcador de Mapbox con Avatar Circular */
+        .marcador-avatar-container {
+            width: 46px; height: 46px; border-radius: 50%;
+            border: 3px solid #0284c7; background-color: #ffffff;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            overflow: hidden; cursor: pointer;
+            background-size: cover; background-position: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="panel-navegacion">
+        <div class="header-brand">
+            <h3>📡 NOXUR Mobile</h3>
+            <span class="badge-live">EN VIVO</span>
+        </div>
+
+        <!-- 🔍 Buscador de Direcciones -->
+        <span class="label">🔍 Buscar Dirección:</span>
+        <div class="search-container">
+            <input type="text" id="input-busqueda" class="search-input" placeholder="Ej: Av. Corrientes 1234, CABA" onkeypress="if(event.key==='Enter') buscarDireccion()">
+            <button class="search-btn" onclick="buscarDireccion()">Buscar</button>
+        </div>
+
+        <div class="direccion-box">
+            <span class="label">🚗 Última Actividad Telemetría:</span>
+            <span id="dir-destino" class="coordenadas">Monitoreando red...</span>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // Token de acceso oficial Mapbox
+        mapboxgl.accessToken = 'YOUR_MAPBOX_TOKEN';
+
+        // Inicializar Mapbox Map (Nota: Mapbox utiliza [Longitud, Latitud])
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/streets-v12', // Podés usar 'mapbox://styles/mapbox/dark-v11' para modo noche
+            center: [-58.3695, -34.7344],
+            zoom: 15
+        });
+
+        // Controles de navegación zoom/rotación
+        map.addControl(new mapboxgl.NavigationControl());
+
+        // Diccionario de marcadores por dispositivo (DNI)
+        const autoMarkers = {};
+        let marcadorBusqueda = null;
+
+        // Función auxiliar para construir el elemento HTML del Avatar
+        function crearElementoAvatar(base64Foto) {
+            const el = document.createElement('div');
+            el.className = 'marcador-avatar-container';
+            const urlImg = base64Foto ? `data:image/jpeg;base64,${base64Foto}` : 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png';
+            el.style.backgroundImage = `url('${urlImg}')`;
+            return el;
+        }
+
+        // 🔍 Función para buscar direcciones
+        function buscarDireccion() {
+            const query = document.getElementById('input-busqueda').value.trim();
+            if (!query) return;
+
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=ar`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.length > 0) {
+                        const lat = parseFloat(data[0].lat);
+                        const lon = parseFloat(data[0].lon);
+                        const pos = [lon, lat]; // [Lng, Lat] para Mapbox
+
+                        if (marcadorBusqueda) marcadorBusqueda.remove();
+                        
+                        const popup = new mapboxgl.Popup({ offset: 25 })
+                            .setHTML(`<b>Dirección encontrada:</b><br>${data[0].display_name}`);
+
+                        marcadorBusqueda = new mapboxgl.Marker({ color: '#ef4444' })
+                            .setLngLat(pos)
+                            .setPopup(popup)
+                            .addTo(map);
+
+                        marcadorBusqueda.togglePopup();
+                        map.flyTo({ center: pos, zoom: 16 });
+                    } else {
+                        alert("Dirección no encontrada. Probá agregando la localidad.");
+                    }
+                })
+                .catch(err => console.error("Error en búsqueda:", err));
+        }
+
+        // Carga inicial del historial de todos los dispositivos
+        fetch('/api/historial')
+            .then(res => res.json())
+            .then(puntos => {
+                puntos.forEach(p => {
+                    const dispId = p.dispositivo_id;
+                    const puntoX = [parseFloat(p.lng), parseFloat(p.lat)]; // [Lng, Lat]
+                    const nombreUsuario = (p.nombres || p.apellidos) ? `${p.nombres || ''} ${p.apellidos || ''}` : `ID: ${dispId}`;
+
+                    if (!autoMarkers[dispId]) {
+                        const el = crearElementoAvatar(p.foto);
+                        const popup = new mapboxgl.Popup({ offset: 25 })
+                            .setHTML(`<b>${nombreUsuario}</b><br>ID: ${dispId}`);
+
+                        autoMarkers[dispId] = new mapboxgl.Marker({ element: el })
+                            .setLngLat(puntoX)
+                            .setPopup(popup)
+                            .addTo(map);
+                    } else {
+                        autoMarkers[dispId].setLngLat(puntoX);
+                    }
+                });
+            })
+            .catch(err => console.error("Error cargando historial:", err));
+
+        // Eventos en tiempo real mediante Sockets
+        const socket = io();
+
+        socket.on('posicion_actualizada', function(data) {
+            const dispId = data.dispositivo_id;
+            const puntoX = [parseFloat(data.lng), parseFloat(data.lat)]; // [Lng, Lat]
+
+            document.getElementById('dir-destino').innerText = `ID [${dispId}]: ${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}`;
+
+            if (!autoMarkers[dispId]) {
+                const el = crearElementoAvatar(data.foto);
+                const popup = new mapboxgl.Popup({ offset: 25 })
+                    .setHTML(`<b>ID: ${dispId}</b>`);
+
+                autoMarkers[dispId] = new mapboxgl.Marker({ element: el })
+                    .setLngLat(puntoX)
+                    .setPopup(popup)
+                    .addTo(map);
+            } else {
+                autoMarkers[dispId].setLngLat(puntoX);
+                if (data.foto) {
+                    const el = autoMarkers[dispId].getElement();
+                    el.style.backgroundImage = `url('data:image/jpeg;base64,${data.foto}')`;
+                }
+            }
+            
+            map.panTo(puntoX);
+        });
+    </script>
+</body>
+</html>
