@@ -8,6 +8,13 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import database
 
+# Librería de traducción
+try:
+    from googletrans import Translator
+    translator = Translator()
+except ImportError:
+    translator = None
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'noxurmobile_secret_key_2026'
 
@@ -62,6 +69,32 @@ def json_response(data, status_code=200):
 @app.route('/')
 def index():
     return render_template('mapa.html')
+
+# --- ENDPOINT TRADUCTOR LIVE ---
+
+@app.route('/api/traductor/traducir', methods=['POST'])
+@limiter.limit("60 per minute")
+def traducir_texto():
+    """Endpoint para procesar traducciones de texto enviadas por la app móvil."""
+    if translator is None:
+        return json_response({'error': 'Servicio de traducción no disponible en el servidor'}, 500)
+
+    datos = request.get_json(silent=True) or request.form.to_dict() or {}
+    texto = str(datos.get('texto', '')).strip()
+    origen = str(datos.get('origen', 'es')).strip().lower()
+    destino = str(datos.get('destino', 'en')).strip().lower()
+
+    if not texto:
+        return json_response({'traducido': ''}, 200)
+
+    try:
+        resultado = translator.translate(texto, src=origen, dest=destino)
+        return json_response({'traducido': resultado.text}, 200)
+    except Exception as e:
+        print(f"❌ Error procesando traducción: {e}")
+        return json_response({'error': 'Error al procesar la traducción'}, 500)
+
+# --- RUTAS DE GESTIÓN DE PERFIL ---
 
 @app.route('/api/perfil', methods=['POST'])
 @limiter.limit("20 per minute")
