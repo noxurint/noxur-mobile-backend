@@ -72,27 +72,36 @@ def index():
 
 # --- ENDPOINT TRADUCTOR LIVE ---
 
-@app.route('/api/traductor/traducir', methods=['POST'])
-@limiter.limit("60 per minute")
-def traducir_texto():
-    """Endpoint para procesar traducciones de texto enviadas por la app móvil."""
-    if translator is None:
-        return json_response({'error': 'Servicio de traducción no disponible en el servidor'}, 500)
+import requests
+from flask import jsonify, request
 
-    datos = request.get_json(silent=True) or request.form.to_dict() or {}
-    texto = str(datos.get('texto', '')).strip()
-    origen = str(datos.get('origen', 'es')).strip().lower()
-    destino = str(datos.get('destino', 'en')).strip().lower()
+
+@app.route("/api/traductor/traducir", methods=["POST"])
+def traducir_texto():
+  try:
+    data = request.get_json() or {}
+    texto = data.get("texto", "").strip()
+    origen = data.get("origen", "es").strip()
+    destino = data.get("destino", "en").strip()
 
     if not texto:
-        return json_response({'traducido': ''}, 200)
+      return jsonify({"error": "No se proporcionó texto para traducir"}), 400
 
-    try:
-        resultado = translator.translate(texto, src=origen, dest=destino)
-        return json_response({'traducido': resultado.text}, 200)
-    except Exception as e:
-        print(f"❌ Error procesando traducción: {e}")
-        return json_response({'error': 'Error al procesar la traducción'}, 500)
+    # Petición directa y ultra rápida a la API gratuita de Google Translate
+    url_gt = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={origen}&tl={destino}&dt=t&q={requests.utils.quote(texto)}"
+    res = requests.get(url_gt, timeout=5)
+
+    if res.status_code == 200:
+      res_json = res.json()
+      # Extraer el texto traducido
+      traduccion = "".join([segmento[0] for segmento in res_json[0]])
+      return jsonify({"traducido": traduccion, "origen": origen, "destino": destino}), 200
+    else:
+      return jsonify({"error": "Falla en servicio de traducción"}), 500
+
+  except Exception as e:
+    print(f"Error en /api/traductor/traducir: {e}")
+    return jsonify({"error": str(e)}), 500
 
 # --- RUTAS DE GESTIÓN DE PERFIL ---
 
