@@ -77,32 +77,34 @@ import requests
 from flask import jsonify, request
 
 
-@app.route("/api/traductor/traducir", methods=["POST"])
+@app.route('/api/traductor/traducir', methods=['POST'])
 def traducir_texto():
   try:
     data = request.get_json() or {}
-    texto = data.get("texto", "").strip()
-    origen = data.get("origen", "es").strip()
-    destino = data.get("destino", "en").strip()
+    texto = data.get('texto', '').strip()
+    origen = data.get('origen', 'es').strip()
+    destino = data.get('destino', 'en').strip()
 
     if not texto:
-      return jsonify({"error": "No se proporcionó texto para traducir"}), 400
+      return jsonify({'error': 'No se proporcionó texto'}), 400
 
-    # Petición directa y ultra rápida a la API gratuita de Google Translate
-    url_gt = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={origen}&tl={destino}&dt=t&q={requests.utils.quote(texto)}"
+    url_gt = f'https://translate.googleapis.com/translate_a/single?client=gtx&sl={origen}&tl={destino}&dt=t&q={requests.utils.quote(texto)}'
     res = requests.get(url_gt, timeout=5)
 
     if res.status_code == 200:
       res_json = res.json()
-      # Extraer el texto traducido
-      traduccion = "".join([segmento[0] for segmento in res_json[0]])
-      return jsonify({"traducido": traduccion, "origen": origen, "destino": destino}), 200
+      traduccion = ''.join([segmento[0] for segmento in res_json[0]])
+      return (
+          jsonify(
+              {'traducido': traduccion, 'origen': origen, 'destino': destino}
+          ),
+          200,
+      )
     else:
-      return jsonify({"error": "Falla en servicio de traducción"}), 500
+      return jsonify({'error': 'Error en respuesta de traduccion'}), 500
 
   except Exception as e:
-    print(f"Error en /api/traductor/traducir: {e}")
-    return jsonify({"error": str(e)}), 500
+    return jsonify({'error': str(e)}), 500
 
 # --- RUTAS DE GESTIÓN DE PERFIL ---
 
