@@ -1,13 +1,13 @@
 import functools
 import sqlite3
 import traceback
+import requests
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import database
-import requests
 
 # Librería de traducción
 try:
@@ -46,7 +46,6 @@ def requerir_api_key(f):
     @functools.wraps(f)
     def decorated_function(*args, **kwargs):
         token_recibido = request.headers.get('x-api-key')
-        # Si la app envía la cabecera, se valida obligatoriamente
         if token_recibido and token_recibido != CLAVE_SECRETA_APP:
             return json_response({"exito": False, "mensaje": "No autorizado. Clave de API inválida."}, 401)
         return f(*args, **kwargs)
@@ -73,38 +72,33 @@ def index():
 
 # --- ENDPOINT TRADUCTOR LIVE ---
 
-import requests
-from flask import jsonify, request
-
-
 @app.route('/api/traductor/traducir', methods=['POST'])
 def traducir_texto():
-  try:
-    data = request.get_json() or {}
-    texto = data.get('texto', '').strip()
-    origen = data.get('origen', 'es').strip()
-    destino = data.get('destino', 'en').strip()
+    try:
+        data = request.get_json(silent=True) or {}
+        texto = data.get('texto', '').strip()
+        origen = data.get('origen', 'es').strip()
+        destino = data.get('destino', 'en').strip()
 
-    if not texto:
-      return jsonify({'error': 'No se proporcionó texto'}), 400
+        if not texto:
+            return jsonify({'error': 'No se proporcionó texto'}), 400
 
-    url_gt = f'https://translate.googleapis.com/translate_a/single?client=gtx&sl={origen}&tl={destino}&dt=t&q={requests.utils.quote(texto)}'
-    res = requests.get(url_gt, timeout=5)
+        url_gt = f'https://translate.googleapis.com/translate_a/single?client=gtx&sl={origen}&tl={destino}&dt=t&q={requests.utils.quote(texto)}'
+        res = requests.get(url_gt, timeout=5)
 
-    if res.status_code == 200:
-      res_json = res.json()
-      traduccion = ''.join([segmento[0] for segmento in res_json[0]])
-      return (
-          jsonify(
-              {'traducido': traduccion, 'origen': origen, 'destino': destino}
-          ),
-          200,
-      )
-    else:
-      return jsonify({'error': 'Error en respuesta de traduccion'}), 500
+        if res.status_code == 200:
+            res_json = res.json()
+            traduccion = ''.join([segmento[0] for segmento in res_json[0] if segmento and segmento[0]])
+            return jsonify({
+                'traducido': traduccion, 
+                'origen': origen, 
+                'destino': destino
+            }), 200
+        else:
+            return jsonify({'error': 'Error en respuesta de traducción'}), 500
 
-  except Exception as e:
-    return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # --- RUTAS DE GESTIÓN DE PERFIL ---
 
@@ -319,7 +313,7 @@ def obtener_voz():
     mensajes = database.obtener_mensajes_voz_grupo(grupo, mi_dni)
     return json_response(mensajes, 200)
 
-# --- RUTAS DE MENSAJES DE TEXTO E IMÁGENES ---
+# --- RUTAS DE MENSAJES DE TEXTO, STICKERS E IMÁGENES ---
 
 @app.route('/api/texto/enviar', methods=['POST'])
 @limiter.limit("30 per minute")
@@ -332,7 +326,7 @@ def enviar_mensaje_texto():
         nombre = str(data.get('nombre', 'Móvil')).strip()
         texto = str(data.get('texto', '')).strip()
         receptor_dni = str(data.get('receptor_dni', 'TODOS')).replace('.', '').replace('-', '').replace(' ', '').strip()
-        tipo_msg = str(data.get('tipo_msg', 'texto')).strip()
+        tipo_msg = str(data.get('tipo_msg', 'texto')).strip()  # 'texto', 'imagen', 'sticker'
         imagen_b64 = data.get('imagen_b64')
 
         if not grupo or not dni:
@@ -463,7 +457,7 @@ def obtener_eventos():
         c.execute('''
             SELECT id, creador_dni, creador_nombre, tipo, titulo, lat, lng, timestamp
             FROM eventos_grupo
-            WHERE codigo_grupo = ? AND timestamp >= datetime('now', '-12 hours')
+            WHERE codigo_grupo = ? AND timestamp >= datetime('now', '-48 hours')
             ORDER BY id DESC
         ''', (codigo_grupo,))
         
